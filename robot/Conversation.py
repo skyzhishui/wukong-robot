@@ -174,33 +174,42 @@ class Conversation(object):
         :param onCompleted: 完成的回调
         :param wait: 是否要等待说完（为True将阻塞主线程直至说完这句话）
         """
-        self.appendHistory(1, msg, plugin=plugin)
+        if plugin != '':
+            self.appendHistory(1, "[{}] {}".format(plugin, msg))
+        else:
+            self.appendHistory(1, msg)
         pattern = r'^https?://.+'
         if re.match(pattern, msg):
             logger.info("内容包含URL，所以不读出来")
-            self.onSay(msg, '', plugin=plugin)
-            self.onSay = None
             return
         voice = ''
         cache_path = ''
         if utils.getCache(msg):
             logger.info("命中缓存，播放缓存语音")
-            voice = utils.getCache(msg)
-            cache_path = utils.getCache(msg)
+            if config.get('/tts_engine') == 'hass-tts':
+                voice = self.tts.get_speech(msg)
+            else:
+                voice = utils.getCache(msg)
+                cache_path = utils.getCache(msg)
         else:
             try:
                 voice = self.tts.get_speech(msg)
-                cache_path = utils.saveCache(voice, msg)
+                if voice != '':
+                    cache_path = utils.saveCache(voice, msg)
             except Exception as e:
                 logger.error('保存缓存失败：{}'.format(e))
         if self.onSay:
             logger.info(cache)
             audio = 'http://{}:{}/audio/{}'.format(config.get('/server/host'), config.get('/server/port'), os.path.basename(cache_path))
             logger.info('onSay: {}, {}'.format(msg, audio))
-            self.onSay(msg, audio, plugin=plugin)
+            if plugin != '':
+                self.onSay("[{}] {}".format(plugin, msg), audio)
+            else:
+                self.onSay(msg, audio)
             self.onSay = None
+
         if onCompleted is None:
-            onCompleted = lambda: self._onCompleted(msg)        
+            onCompleted = lambda: self._onCompleted(msg)
         self.player = Player.SoxPlayer()
         self.player.play(voice, not cache, onCompleted, wait)
         if not cache:
