@@ -3,6 +3,8 @@ import os
 import base64
 import tempfile
 import pypinyin
+import requests
+import json
 from aip import AipSpeech
 from . import utils, config, constants
 from robot import logging
@@ -210,6 +212,37 @@ class XunfeiTTS(AbstractTTS):
 
     def get_speech(self, phrase):
         return XunfeiSpeech.synthesize(phrase, self.appid, self.api_key, self.api_secret, self.voice_name)
+    
+class HassTTS(AbstractTTS):
+    """   对接home assistant api接口，调用外部media_player的tts服务   """
+
+    SLUG = "hass-tts"
+    def __init__(self, url, key, media_player, **args):
+        self.url = url
+        self.key = key
+        self.media_player = media_player
+        super(self.__class__, self).__init__()
+    @classmethod
+    def get_config(cls):
+        # Try to get hass_yuyin config from config
+        return config.get('hass_yuyin', {})
+
+    def get_speech(self, phrase):
+        headers = {'Authorization': self.key, 'content-type': 'application/json'}
+        self.execute_script(self.media_player, self.url, headers, phrase)
+        return ""
+    
+    def execute_script(self, entity_id, url, headers, message):
+        p = json.dumps({"entity_id": entity_id,"message": message})
+        s = "/api/services/tts/baidu_say"
+        url_s = url + s
+        request = requests.post(url_s, headers=headers, data=p)
+        if format(request.status_code) == "200" or \
+            format(request.status_code) == "201": 
+            return True
+        else:
+            logger.error(format(request.status_code))
+            return False
 
 
 class AliTTS(AbstractTTS):
@@ -258,8 +291,8 @@ def get_engine_by_slug(slug=None):
         if len(selected_engines) > 1:
             logger.warning("注意: 有多个 TTS 名称与指定的引擎名 {} 匹配").format(slug)        
         engine = selected_engines[0]
-        logger.info("使用 {} TTS 引擎".format(engine.SLUG))
-        return engine.get_instance()
+        en = engine.get_instance()
+        return en
 
 
 def get_engines():
