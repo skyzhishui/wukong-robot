@@ -2,7 +2,9 @@
 import subprocess
 import os
 import platform
-from . import utils
+import time
+import json
+from . import utils, config
 import _thread as thread
 from robot import logging
 from ctypes import CFUNCTYPE, c_char_p, c_int, cdll
@@ -64,7 +66,61 @@ class SoxPlayer(AbstractPlayer):
         self.proc = None
         self.delete = False
         self.onCompleteds = []
+        self.hasskey = None
+        self.media_player = None
+        self.hassurl = None
+        if config.get('/tts_engine') == 'hass-tts':
+            self.hassurl = config.get('/hass_yuyin/url')
+            self.hasskey = config.get('/hass_yuyin/key')
+            self.media_player = config.get('/hass_yuyin/media_player')
 
+    def hassplay(self, path):
+        headers = {'Authorization': self.hasskey, 'content-type': 'application/json'}
+        p = json.dumps({"entity_id": self.media_player, "media_content_id": path, "media_content_type": "music"})
+        s = "/api/services/media_player/play_media"
+        url_s = self.hassurl + s
+        request = requests.post(url_s, headers=headers, data=p)
+        if format(request.status_code) == "200" or format(request.status_code) == "201":
+            return True
+        else:
+            logger.error(format(request.status_code))
+            return False
+
+    def ishassplayshell(self):
+        cmd = 'curl -k --silent "{}/api/states/{}" -H "Authorization: {}" -H "Content-Type: application/json"'.format(self.hassurl, self.media_player, self.hasskey)
+        reqjson = json.loads(os.popen(cmd).read())
+        state = reqjson["state"]
+        if state == "ldle" or state == "paused":
+            return False
+        else:
+            return True
+
+    def ishassplaying(self):
+        headers = {'Authorization': self.hasskey, 'content-type': 'application/json'}
+        s = "/api/states/" + self.media_player
+        url_s = self.hassurl + s
+        reqjson = requests.get(url=url_s, headers=headers).json()
+        state = reqjson["state"]
+        if state == "ldle" or state == "paused":
+            return False
+        else:
+            return True
+
+    def doHassPlay(self):
+        self.playing = True
+        if self.src.startswith('http'):
+            if self.hassplay(self.src) == False:
+                logger.critical('hass播放失败！ {}'.format(self.src))
+            time.sleep(3)
+        else:
+            while(self.playing):
+                self.playing = self.ishassplayshell()
+                time.sleep(0.1)
+            logger.info('现在hass播放状态: {}'.format(self.playing))
+            for onCompleted in self.onCompleteds:
+                if onCompleted is not None:
+                    onCompleted()
+                    
     def doPlay(self):
         cmd = ['play', str(self.src)]
         logger.debug('Executing %s', ' '.join(cmd))
@@ -79,9 +135,9 @@ class SoxPlayer(AbstractPlayer):
             for onCompleted in self.onCompleteds:
                 if onCompleted is not None:
                     onCompleted()
-    
+                              
     def play(self, src, delete=False, onCompleted=None, wait=False):
-        if os.path.exists(src) or src.startswith('http'):
+        if os.path.exists(src) or self.hassurl is None:
             self.src = src
             self.delete = delete
             if onCompleted is not None:
@@ -90,6 +146,15 @@ class SoxPlayer(AbstractPlayer):
                 thread.start_new_thread(self.doPlay, ())
             else:
                 self.doPlay()
+        elif self.hassurl is not None:
+            self.src = src
+            self.delete = delete
+            if onCompleted is not None:
+                self.onCompleteds.append(onCompleted)
+            #if not wait:  #mark一下，有坑
+            #    thread.start_new_thread(self.doHassPlay, ())
+            #else:
+            self.doHassPlay()
         else:
             logger.critical('path not exists: {}'.format(src))
 
